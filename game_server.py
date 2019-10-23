@@ -2,25 +2,38 @@ import aiofiles
 import argparse
 import asyncio
 import os
-import hashlib
 
 from encoding import write_payload
 import encoding
 
-def read_chunks(f, length):
-    while True:
-        data = f.read(length)
-        if not data:
-            break
-        yield data
 
-
-def all_gzipped_files(scan_iter):
+def all_gzipped_files(scan_iter, filter_text, output_dir, input_dir, resume_mode):
     for (dir, _, filenames) in scan_iter:
         for filename in filenames:
+            if filter_text and filter_text not in filename and filter_text not in dir:
+                continue
             if not filename.endswith('.gz'):
                 continue
-            yield os.path.join(dir, filename)
+            filename_to_load = os.path.join(dir, filename)
+            if resume_mode:
+                outpath, _ = _get_full_output_filename(output_dir, input_dir, filename_to_load)
+                try:
+                    os.stat(outpath + os.sep + filename)
+                    continue
+                except:
+                    pass
+            yield filename_to_load
+
+
+def _get_full_output_filename(output_dir, input_dir, filepath):
+    if not input_dir.endswith(os.sep):
+        input_dir += os.sep
+    relative_filepath = filepath[len(input_dir):]
+    path = os.path.normpath(relative_filepath)
+    path_parts = path.split(os.sep)
+    dir_parts = [output_dir] + path_parts[:len(path_parts) - 1]
+    filename = path_parts[-1]
+    return os.sep.join(dir_parts), filename
 
 
 async def load_files(filenames):
@@ -32,28 +45,27 @@ async def load_files(filenames):
     return files
 
 
-async def write_files_to_disk(output_dir, filepaths, files):
+async def write_files_to_disk(output_dir, input_dir, filepaths, files):
     for path, file in zip(filepaths, files):
         if not file:
             #TODO: some warning
             continue
-        path = os.path.normpath(path)
-        path_parts = path.split(os.sep)
-        dir_parts = [output_dir] + path_parts[:len(path_parts) - 1]
-        filename = path_parts[-1]
-        os.makedirs(os.sep.join(dir_parts), exist_ok=True)
 
-        async with aiofiles.open(os.sep.join(dir_parts + [filename]), 'wb') as f:
+        full_out_directory, filename = _get_full_output_filename(output_dir, input_dir, path)
+        os.makedirs(full_out_directory, exist_ok=True)
+
+        async with aiofiles.open(full_out_directory + os.sep + filename, 'wb') as f:
             await f.write(file)
             await f.close()
 
 
 class DirectoryQueue:
-    def __init__(self, input_dir, output_dir, default_chunk_size):
+    def __init__(self, input_dir, output_dir, filter_text, resume_mode):
         self.input_dir = input_dir
         self.output_dir = output_dir
-        self.default_chunk_size = default_chunk_size
-        self.scan_iter = all_gzipped_files(os.walk(input_dir))
+        self.filter_text = filter_text
+        self.scan_iter = all_gzipped_files(os.walk(input_dir), filter_text, output_dir, input_dir, resume_mode)
+        self.resume_mode = resume_mode
 
     async def handle_new_client(self, reader, writer):
         # Check it's a valid connection and client is ready
@@ -101,14 +113,15 @@ class DirectoryQueue:
             # TODO: Do some sanity checking on these files to make sure they're roughly the right size.
 
             print(f'persisting {len(file_outputs)} files')
-            await write_files_to_disk(self.output_dir, filenames, file_outputs)
+            await write_files_to_disk(self.output_dir, self.input_dir, filenames, file_outputs)
 
 
 async def main(args):
     directory_queue = DirectoryQueue(
         args.input_folder,
         args.output_folder,
-        args.chunk_size
+        args.filter_text,
+        args.resume_mode
     )
     server = await asyncio.start_server(
         directory_queue.handle_new_client,
@@ -135,11 +148,17 @@ if __name__ == '__main__' :
              'name. DO NOT MAKE THE INPUT FOLDER THE SAME AS THE OUTPUT '
     )
     parser.add_argument(
-        '--chunk-size',
-        dest='chunk_size',
-        default=10,
-        type=int,
-        help='How many games to hand at once to a client (can be overriden by client)'
+        '--filter-text',
+        dest='filter_text',
+        default='',
+        help='If passed, only games/folders with filter-text will be considered'
+    )
+    parser.add_argument(
+        '--resume-mode',
+        dest='resume_mode',
+        type=bool,
+        default=False,
+        help='Pass this if in you expect a lot of work to already be done in output_dir, will turn on checking output_dir first before yielding files to clients'
     )
     args = parser.parse_args()
     asyncio.run(main(args))

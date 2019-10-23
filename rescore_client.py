@@ -26,11 +26,9 @@ def parseV4(data):
     return (constants.MOVES[npmax(probs)] , data)
 
 
-def read_chunks(f, length):
-    while True:
-        data = f.read(length)
-        if not data: break
-        yield data
+def read_chunks(data, length):
+    for i in range(0, len(data), length):
+        yield data[i:i + length]
 
 
 def score_file(data, engine):
@@ -84,7 +82,7 @@ async def main(args):
         "WeightsFile": args.path_to_weights,
         "Threads": 2,
         "ScoreType": "Q",
-        "Backend": "cudnn",
+        "Backend": args.backend,
         "BackendOptions": f'gpu={args.gpu_id}',
     }
     command = args.path_to_rescore_engine_binary
@@ -128,7 +126,7 @@ async def main(args):
             if args.dry_run:
                 scored_files.append(file)
             else:
-                compressed_scored_game = score_file(engine, file)
+                compressed_scored_game = score_file(file, engine)
                 scored_files.append(compressed_scored_game)
 
         print(f'finished scoring {len(scored_files)} files')
@@ -159,6 +157,13 @@ if  __name__ == '__main__':
         dest='path_to_weights',
         type=str,
         help='path to NN weights that will be provided to engine-binary'
+    )
+    parser.add_argument(
+        '--backend',
+        dest='backend',
+        type=str,
+        default='cudnn',
+        help='backend type to pass to the scoring engine',
     )
     parser.add_argument(
         '--host',
