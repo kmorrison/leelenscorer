@@ -61,30 +61,48 @@ def parse_game(data):
         yield move_encoding
 
 
-def npmax(l):
-    max_idx = np.nanargmax(l)
-    return max_idx
-
-def parseV4(data):
-    (version, probs_, planes_, us_ooo, us_oo, them_ooo, them_oo, stm, rule50_count, move_count, winner, root_q, best_q, root_d, best_d) = struct.unpack(
-        constants.V4_STRUCT_STRING,
-        data
-    )
-    probs = np.frombuffer(probs_, dtype=np.float32)
-    return (constants.MOVES[npmax(probs)] , data)
-
-
 def read_chunks(data, length):
     for i in range(0, len(data), length):
         yield data[i:i + length]
 
+def set_castling(board, move_encoding):
+    castle = []
+    if move_encoding.us_oo:
+        castle.append('K')
+    if move_encoding.us_ooo:
+        castle.append('Q')
+    if move_encoding.them_oo:
+        castle.append('k')
+    if move_encoding.them_ooo:
+        castle.append('q')
+    castling_fen = "".join(castle)
+    board.set_castling_fen(castling_fen)
 
-def score_file(data, engine, use_highest_probability_move=True, infer_move_from_planes=False):
+
+def _infer_move_from_planes_and_current_board(planes, current_board):
+    new_board = new_board_from_planes(planes)
+    # Because `board` gets mirrored after move-push, it is always white to move. When the game is parsed from
+    # planes, white is always to move. Therefore to anticipate the next board, we must change who is to move
+    # on next board.
+    new_board = new_board.mirror()
+    for legal_move in current_board.legal_moves:
+        current_board.push(legal_move)
+        if current_board.piece_map() == new_board.piece_map():
+            move = legal_move.uci()
+            current_board.pop()
+            return move
+        current_board.pop()
+
+    else:
+        print(f"Couldn't infer next move from planes, board {current_board.fen()} planes {new_board.fen()}")
+        return None
+
+
+def score_file(data, engine):
     decompressed_data = gzip.decompress(data)
     board = chess.Board()
     rescored_game = struct.pack("")
     for current_encoding, next_encoding in pairwise(parse_game(decompressed_data)):
-        print(board)
         if len(board.piece_map()) == 5:
             break
         if engine is not None:
@@ -112,27 +130,15 @@ def score_file(data, engine, use_highest_probability_move=True, infer_move_from_
         else:
             rescored_game += struct.pack(constants.V4_STRUCT_STRING, *current_encoding)
 
-        assert use_highest_probability_move ^ infer_move_from_planes, f'{use_highest_probability_move} {infer_move_from_planes}'
-        if use_highest_probability_move:
-            probs = np.frombuffer(current_encoding.probs, dtype=np.float32)
-            move = constants.MOVES[npmax(probs)]
+        # Find next move that was played in game
+        probs = np.frombuffer(current_encoding.probs, dtype=np.float32)
+        if sum(element > 0 for element in probs) == 1:
+            move = constants.MOVES[np.nanargmax(probs)]
+        else:
+            move = _infer_move_from_planes_and_current_board(next_encoding.planes, board)
+            assert move is not None, "Couldn't infer move, failing"
 
-        elif infer_move_from_planes:
-            new_board = new_board_from_planes(next_encoding.planes)
-            if board.turn:
-                new_board = new_board.mirror()
-            for legal_move in board.legal_moves:
-                board.push(legal_move)
-                if board.piece_map() == new_board.piece_map():
-                    move = legal_move.uci()
-                    board.pop()
-                    break
-                board.pop()
-
-            else:
-                print(f"Couldn't infer next move from planes, board {board.fen()} planes {new_board.fen()}")
-                assert False
-
+        # Clean move to fit python-chess data expectations
         if move[1] == "7" and move[3] == "8" and board.piece_type_at(
                 chess.SQUARE_NAMES.index(move[0:2])) == chess.PAWN and len(move) == 4:
             move += "n"
@@ -224,16 +230,12 @@ async def main(args):
                 compressed_unscored_game = score_file(
                     file,
                     None,
-                    args.use_highest_probability_move,
-                    args.infer_move_from_planes
                 )
                 scored_files.append(compressed_unscored_game)
             else:
                 compressed_scored_game = score_file(
                     file,
                     engine,
-                    args.use_highest_probability_move,
-                    args.infer_move_from_planes
                 )
                 scored_files.append(compressed_scored_game)
 
@@ -294,18 +296,6 @@ if  __name__ == '__main__':
         type=bool,
         default=False,
         help='Just parrot back the data the server sends. Useful for testing the client, not actually scoring anything'
-    )
-    parser.add_argument(
-        '--use-highest-probability-move',
-        dest='use_highest_probability_move',
-        type=bool,
-        default=True,
-    )
-    parser.add_argument(
-        '--infer-move-from-planes',
-        dest='infer_move_from_planes',
-        type=bool,
-        default=False,
     )
     args = parser.parse_args()
     asyncio.run(main(args))
