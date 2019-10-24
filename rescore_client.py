@@ -2,7 +2,8 @@ import argparse
 import asyncio
 import struct
 import gzip
-import hashlib
+import itertools
+from collections import namedtuple
 from asyncio import IncompleteReadError
 
 import chess
@@ -11,6 +12,53 @@ import np
 
 import constants
 import encoding
+from util import pairwise
+
+V4Encoding = namedtuple(
+    'V4Encoding',
+    [
+        'version',
+        'probs',
+        'planes',
+        'us_ooo',
+        'us_oo',
+        'them_ooo',
+        'them_oo',
+        'stm',
+        'rule50_count',
+        'move_count',
+        'winner',
+        'root_q',
+        'best_q',
+        'root_d',
+        'best_d',
+    ]
+)
+
+def convert_planes(planes):
+    retval = []
+    for idx in range(0, len(planes), 8):
+        pl = planes[idx:idx + 8]
+        a = np.fromstring(pl, dtype=np.uint8).reshape(8, 1)
+        retval.append(np.unpackbits(a, 1))
+    return retval
+
+
+def new_board_from_planes(planes):
+    new_board = chess.Board.empty()
+    piece_maps = convert_planes(planes)[:len(constants.PIECES)]
+
+    for i, piece in enumerate(constants.PIECES):
+        for (j, k) in itertools.product(range(8), range(8)):
+            if piece_maps[i][k][j]:
+                new_board.set_piece_at(chess.square(j, k), chess.Piece.from_symbol(piece))
+    return new_board
+
+
+def parse_game(data):
+    for chunk in read_chunks(data, constants.V4_BYTES):
+        move_encoding = V4Encoding(*struct.unpack(constants.V4_STRUCT_STRING, chunk))
+        yield move_encoding
 
 
 def npmax(l):
@@ -31,16 +79,60 @@ def read_chunks(data, length):
         yield data[i:i + length]
 
 
-def score_file(data, engine):
+def score_file(data, engine, use_highest_probability_move=True, infer_move_from_planes=False):
     decompressed_data = gzip.decompress(data)
-    game = [parseV4(chunk) for chunk in read_chunks(decompressed_data, constants.V4_BYTES)]
     board = chess.Board()
     rescored_game = struct.pack("")
-    for record in game:
+    for current_encoding, next_encoding in pairwise(parse_game(decompressed_data)):
+        print(board)
         if len(board.piece_map()) == 5:
             break
-        move = record[0]
-        i = 0
+        if engine is not None:
+            info = engine.analyse(board, chess.engine.Limit(nodes=1))
+            q = info["score"].relative.score(mate_score=100) / 10000
+
+            rescored_game += struct.pack(
+                constants.V4_STRUCT_STRING,
+                current_encoding.version,
+                current_encoding.probs,
+                current_encoding.planes,
+                current_encoding.us_ooo,
+                current_encoding.us_oo,
+                current_encoding.them_ooo,
+                current_encoding.them_oo,
+                current_encoding.stm,
+                current_encoding.rule50_count,
+                current_encoding.move_count,
+                current_encoding.winner,
+                q,
+                q,
+                current_encoding.root_d,
+                current_encoding.best_d,
+            )
+        else:
+            rescored_game += struct.pack(constants.V4_STRUCT_STRING, *current_encoding)
+
+        assert use_highest_probability_move ^ infer_move_from_planes, f'{use_highest_probability_move} {infer_move_from_planes}'
+        if use_highest_probability_move:
+            probs = np.frombuffer(current_encoding.probs, dtype=np.float32)
+            move = constants.MOVES[npmax(probs)]
+
+        elif infer_move_from_planes:
+            new_board = new_board_from_planes(next_encoding.planes)
+            if board.turn:
+                new_board = new_board.mirror()
+            for legal_move in board.legal_moves:
+                board.push(legal_move)
+                if board.piece_map() == new_board.piece_map():
+                    move = legal_move.uci()
+                    board.pop()
+                    break
+                board.pop()
+
+            else:
+                print(f"Couldn't infer next move from planes, board {board.fen()} planes {new_board.fen()}")
+                assert False
+
         if move[1] == "7" and move[3] == "8" and board.piece_type_at(
                 chess.SQUARE_NAMES.index(move[0:2])) == chess.PAWN and len(move) == 4:
             move += "n"
@@ -49,31 +141,36 @@ def score_file(data, engine):
         if move is "e1a1" and board.piece_type_at(chess.E1) == chess.KING:
             move = "e1c1"
         m = chess.Move.from_uci(move)
-        info = engine.analyse(board, chess.engine.Limit(nodes=1))
-        q = info["score"].relative.score(mate_score=100) / 10000
-        (version, probs_, planes_, us_ooo, us_oo, them_ooo, them_oo, stm, rule50_count, move_count, winner, root_q, best_q,
-         root_d, best_d) = struct.unpack(constants.V4_STRUCT_STRING, record[1])
-        rescored_game += struct.pack(
-            constants.V4_STRUCT_STRING,
-            version,
-            probs_,
-            planes_,
-            us_ooo,
-            us_oo,
-            them_ooo,
-            them_oo,
-            stm,
-            rule50_count,
-            move_count,
-            winner,
-            q,
-            q,
-            root_d,
-            best_d,
-        )
+
         board.push(m)
         board = board.mirror()
-        i += 1
+
+    # This is a super ugly hack to solve the off-by-one problem iterating through pairwise gives me, just to get this thing working.
+    if len(board.piece_map()) != 5:
+        if engine is not None:
+            info = engine.analyse(board, chess.engine.Limit(nodes=1))
+            q = info["score"].relative.score(mate_score=100) / 10000
+
+            rescored_game += struct.pack(
+                constants.V4_STRUCT_STRING,
+                next_encoding.version,
+                next_encoding.probs,
+                next_encoding.planes,
+                next_encoding.us_ooo,
+                next_encoding.us_oo,
+                next_encoding.them_ooo,
+                next_encoding.them_oo,
+                next_encoding.stm,
+                next_encoding.rule50_count,
+                next_encoding.move_count,
+                next_encoding.winner,
+                q,
+                q,
+                next_encoding.root_d,
+                next_encoding.best_d,
+            )
+        else:
+            rescored_game += struct.pack(constants.V4_STRUCT_STRING, *next_encoding)
     return gzip.compress(rescored_game)
 
 
@@ -124,9 +221,20 @@ async def main(args):
         scored_files = []
         for file in files_to_score:
             if args.dry_run:
-                scored_files.append(file)
+                compressed_unscored_game = score_file(
+                    file,
+                    None,
+                    args.use_highest_probability_move,
+                    args.infer_move_from_planes
+                )
+                scored_files.append(compressed_unscored_game)
             else:
-                compressed_scored_game = score_file(file, engine)
+                compressed_scored_game = score_file(
+                    file,
+                    engine,
+                    args.use_highest_probability_move,
+                    args.infer_move_from_planes
+                )
                 scored_files.append(compressed_scored_game)
 
         print(f'finished scoring {len(scored_files)} files')
@@ -186,6 +294,18 @@ if  __name__ == '__main__':
         type=bool,
         default=False,
         help='Just parrot back the data the server sends. Useful for testing the client, not actually scoring anything'
+    )
+    parser.add_argument(
+        '--use-highest-probability-move',
+        dest='use_highest_probability_move',
+        type=bool,
+        default=True,
+    )
+    parser.add_argument(
+        '--infer-move-from-planes',
+        dest='infer_move_from_planes',
+        type=bool,
+        default=False,
     )
     args = parser.parse_args()
     asyncio.run(main(args))
