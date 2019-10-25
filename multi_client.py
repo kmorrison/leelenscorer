@@ -3,7 +3,7 @@ import datetime
 import subprocess
 import time
 
-def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, port):
+def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, port, dry_run, backend):
     subprocs = []
     for i in range(num_gpus):
         for _ in range(clients_per_gpu):
@@ -16,7 +16,10 @@ def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, 
                 f'--weights-path={weights}',
                 f'--host={host}',
                 f'--port={port}',
+                f'--backend={backend}',
             ]
+            if dry_run:
+                process_command.append(f'--dry-run=True')
             print(process_command)
             subproc = subprocess.Popen(process_command)
             subprocs.append(subproc)
@@ -29,6 +32,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--clients-per-gpu', dest='clients_per_gpu', type=int, default=2)
     parser.add_argument('--chunk-size', dest='chunk_size', type=int, default=5)
+    parser.add_argument(
+        '--backend',
+        dest='backend',
+        type=str,
+        default='cudnn',
+        help='backend type to pass to the scoring engine',
+    )
     parser.add_argument(
         '--engine-path',
         dest='path_to_rescore_engine_binary',
@@ -57,6 +67,13 @@ if __name__ == '__main__':
         default='8888',
         help='port of game server'
     )
+    parser.add_argument(
+        '--dry-run',
+        dest='dry_run',
+        type=bool,
+        default=False,
+        help='Just parrot back the data the server sends. Useful for testing the client, not actually scoring anything'
+    )
     args = parser.parse_args()
 
     output = subprocess.run(['nvidia-smi', '--list-gpus'], stdout=subprocess.PIPE)
@@ -70,4 +87,6 @@ if __name__ == '__main__':
         args.path_to_weights,
         args.host,
         args.port,
+        args.dry_run,
+        args.backend,
     )

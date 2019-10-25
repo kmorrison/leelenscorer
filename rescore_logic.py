@@ -83,9 +83,10 @@ def _infer_move_from_planes_and_current_board(planes, current_board):
     # planes, white is always to move. Therefore to anticipate the next board, we must change who is to move
     # on next board.
     new_board = new_board.mirror()
+    new_board_piece_map = new_board.piece_map()
     for legal_move in current_board.legal_moves:
         current_board.push(legal_move)
-        if current_board.piece_map() == new_board.piece_map():
+        if new_board_piece_map == current_board.piece_map():
             move = legal_move.uci()
             current_board.pop()
             return move
@@ -94,6 +95,7 @@ def _infer_move_from_planes_and_current_board(planes, current_board):
     else:
         print(f"Couldn't infer next move from planes, board {current_board.fen()} planes {new_board.fen()}")
         return None
+
 
 def score_move(engine, board, move_encoding):
     if engine is None:
@@ -121,6 +123,18 @@ def score_move(engine, board, move_encoding):
     )
 
 
+def _is_single_probability_encoding(probs):
+    """Probability array has a probability associated with each move. For some games, this array is simple. It's p=1
+    for the move that was played, p=0 for legal moves not played, and nan for nonlegal moves. We're trying to find if
+    the probability array given is that type of array, or if many legal moves has nonzero p values. We'd like to do
+    np.count_nonzero(probs), but np.nan is truthy in python and counts as nonzero, so we need to subtract the number
+    of nans present.
+    """
+    num_nan = np.count_nonzero(~np.isnan(probs))
+    num_nonzero = np.count_nonzero(probs)
+    return bool(num_nan - num_nonzero == 1)
+
+
 def score_file(data, engine):
     decompressed_data = gzip.decompress(data)
     board = chess.Board()
@@ -132,7 +146,7 @@ def score_file(data, engine):
 
         # Find next move that was played in game
         probs = np.frombuffer(current_encoding.probs, dtype=np.float32)
-        if sum(element > 0 for element in probs) == 1:
+        if _is_single_probability_encoding(probs):
             move = constants.MOVES[np.nanargmax(probs)]
         else:
             move = _infer_move_from_planes_and_current_board(next_encoding.planes, board)
@@ -152,7 +166,7 @@ def score_file(data, engine):
         board = board.mirror()
 
     # This is a super ugly hack to solve the off-by-one problem iterating through pairwise gives me, just to get this thing working.
-    if len(board.piece_map()) != 5:
+    if rescored_game and len(board.piece_map()) > 5:
         rescored_game += score_move(engine, board, next_encoding)
 
     return gzip.compress(rescored_game)

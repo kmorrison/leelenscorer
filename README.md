@@ -35,6 +35,8 @@ python rescore_client.py --chunk-size=10 --engine-path=<where to engine> --weigh
 
 #To just parrot back the input files and not score anything, use --dry-run option
 python rescore_client.py --dry-run=True --chunk-size=10 --engine-path=<where to engine> --weights-path=<where to weights> --host=<route to server> --port=<server port>
+
+python3 multi_client.py --host=localhost --port=8888 --backend=cudnn-fp16 --clients-per-gpu=5 --engine-path=/root/binaries/lc0 --weights-path=/root/binaries/ls-n11-1.pb.gz --chunk-size=10
 ```
 
 ## Gotchas

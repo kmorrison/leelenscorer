@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 from asyncio import IncompleteReadError
+import time
 
 import chess
 import chess.engine
@@ -13,7 +14,8 @@ import rescore_logic
 async def main(args):
     options = {
         "WeightsFile": args.path_to_weights,
-        "Threads": 2,
+        "Threads": 1,
+        "MinibatchSize": 1,
         "ScoreType": "Q",
         "Backend": args.backend,
         "BackendOptions": f'gpu={args.gpu_id}',
@@ -55,6 +57,7 @@ async def main(args):
             break
 
         scored_files = []
+        start = time.time()
         for file in files_to_score:
             if args.dry_run:
                 compressed_unscored_game = rescore_logic.score_file(
@@ -68,8 +71,9 @@ async def main(args):
                     engine,
                 )
                 scored_files.append(compressed_scored_game)
+        time_elapsed = time.time() - start
 
-        print(f'finished scoring {len(scored_files)} files')
+        print(f'finished scoring {len(scored_files)} files in {time_elapsed} seconds, {len(scored_files) / time_elapsed} files-per-second')
         encoding.write_payload(writer, scored_files)
         await writer.drain()
 
