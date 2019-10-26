@@ -13,9 +13,9 @@ import encoding
 
 def all_gzipped_files(scan_iter, filter_text, output_dir, input_dir, resume_mode):
     for (dir, dirnames, filenames) in scan_iter:
+        if filter_text and filter_text not in dir:
+            continue
         for filename in filenames:
-            if filter_text and filter_text not in dir:
-                continue
             if not filename.endswith('.gz'):
                 continue
             filename_to_load = os.path.join(dir, filename)
