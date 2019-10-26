@@ -1,6 +1,10 @@
 import aiofiles
 import argparse
 import asyncio
+from asyncio import IncompleteReadError
+from collections import deque
+import datetime
+import time
 import os
 
 from encoding import write_payload
@@ -8,9 +12,9 @@ import encoding
 
 
 def all_gzipped_files(scan_iter, filter_text, output_dir, input_dir, resume_mode):
-    for (dir, _, filenames) in scan_iter:
+    for (dir, dirnames, filenames) in scan_iter:
         for filename in filenames:
-            if filter_text and filter_text not in filename and filter_text not in dir:
+            if filter_text and filter_text not in dir:
                 continue
             if not filename.endswith('.gz'):
                 continue
@@ -59,6 +63,32 @@ async def write_files_to_disk(output_dir, input_dir, filepaths, files):
             await f.close()
 
 
+class ClientStats:
+    def __init__(self):
+        self.num_attached_clients = 0
+        # Format = [(timestamp, num_processed, time_taken), (timestamp, num_processed, time_taken)...]
+        self.processed_queue = deque(maxlen=100)
+        self.total_processed = 0
+
+    def compute_stats_for_client(self, last_n_seconds):
+        now = datetime.datetime.now()
+        cutoff_time = now - datetime.timedelta(seconds=last_n_seconds)
+
+        num_processed_in_timeframe = 0
+        real_rate = 0
+        for (timestamp, num_processed, time_taken) in self.processed_queue:
+            if timestamp < cutoff_time:
+                break
+            num_processed_in_timeframe += num_processed
+            real_rate += (num_processed / time_taken)
+        return dict(
+            files_per_second=(num_processed_in_timeframe / last_n_seconds),
+            total_files=self.total_processed,
+            real_rate=real_rate,
+        )
+
+
+
 class DirectoryQueue:
     def __init__(self, input_dir, output_dir, filter_text, resume_mode):
         self.input_dir = input_dir
@@ -66,22 +96,49 @@ class DirectoryQueue:
         self.filter_text = filter_text
         self.scan_iter = all_gzipped_files(os.walk(input_dir), filter_text, output_dir, input_dir, resume_mode)
         self.resume_mode = resume_mode
+        self.total_processed = 0
+        self.client_tracker = {}
+
+    def track_stats(self, num_processed, time_taken, timestamp, client_name):
+        tracker = self.client_tracker[client_name]
+        tracker.total_processed += num_processed
+        tracker.processed_queue.appendleft((timestamp, num_processed, time_taken))
+
+    def register_client(self, client_name):
+        if client_name not in self.client_tracker:
+            self.client_tracker[client_name] = ClientStats()
+        self.client_tracker[client_name].num_attached_clients += 1
+
+    async def print_stats(self, stats_period):
+        while True:
+            computed_rate = 0
+            for client_name, client_stats in self.client_tracker.items():
+                stats = client_stats.compute_stats_for_client(last_n_seconds=stats_period)
+                if not stats:
+                    continue
+                print(f'client {client_name}: procs {client_stats.num_attached_clients} files {stats["total_files"]}  rate {stats["files_per_second"]:.2f}')
+                computed_rate += stats["files_per_second"]
+            print(f'total {self.total_processed}  rate {computed_rate:.2f}')
+            await asyncio.sleep(stats_period)
 
     async def handle_new_client(self, reader, writer):
         # Check it's a valid connection and client is ready
         start_message = await reader.readuntil(encoding.SEP)
         assert encoding.remove_sep(start_message) == b'ready', start_message
 
-        client_set_chunk_size_message = encoding.remove_sep(await reader.readuntil(encoding.SEP))
-        client_set_chunk_size = int(client_set_chunk_size_message.decode())
+        client_identification_message = encoding.remove_sep(await reader.readuntil(encoding.SEP))
+        client_name, client_set_chunk_size_str = client_identification_message.decode().split(' ')
+        client_set_chunk_size = int(client_set_chunk_size_str)
 
         # Find some files to give the client
-        # TODO: If the client fails to process files, put them back in a queue?
-        print('new client')
+        print(f'new client: {client_name} chunksize {client_set_chunk_size}')
+        self.register_client(client_name)
         effective_chunk_size = client_set_chunk_size
 
         while True:
             filenames = []
+            timestamp = datetime.datetime.now()
+            start = time.time()
             for i, filepath in enumerate(self.scan_iter):
                 filenames.append(filepath)
                 if i == effective_chunk_size - 1:
@@ -106,13 +163,21 @@ class DirectoryQueue:
 
             file_outputs = []
             for _ in filenames:
-                file_output = encoding.remove_sep(await reader.readuntil(encoding.SEP))
-                if not file_output:
-                    break
-                file_outputs.append(file_output)
+                try:
+                    file_output = encoding.remove_sep(await reader.readuntil(encoding.SEP))
+                    if not file_output:
+                        break
+                    file_outputs.append(file_output)
+                except IncompleteReadError:
+                    tracker = self.client_tracker.get(client_name)
+                    # TODO: probably put requeueing broken jobs right here
+                    if tracker is not None:
+                        tracker.num_attached_clients -= 1
+                    return
             # TODO: Do some sanity checking on these files to make sure they're roughly the right size.
 
-            print(f'persisting {len(file_outputs)} files')
+            self.track_stats(len(filenames), time.time() - start, timestamp, client_name)
+            self.total_processed += len(filenames)
             await write_files_to_disk(self.output_dir, self.input_dir, filenames, file_outputs)
 
 
@@ -128,6 +193,9 @@ async def main(args):
         '127.0.0.1',
         8888,
     )
+
+    loop = asyncio.get_event_loop()
+    loop.create_task(directory_queue.print_stats(args.stats_period))
 
     async with server:
         await server.serve_forever()
@@ -152,6 +220,13 @@ if __name__ == '__main__' :
         dest='filter_text',
         default='',
         help='If passed, only games/folders with filter-text will be considered'
+    )
+    parser.add_argument(
+        '--stats-period',
+        dest='stats_period',
+        type=int,
+        default=30,
+        help='Compute client stats and print them every N seconds'
     )
     parser.add_argument(
         '--resume-mode',

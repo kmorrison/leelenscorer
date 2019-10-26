@@ -1,6 +1,8 @@
 import argparse
 import asyncio
 from asyncio import IncompleteReadError
+import os
+import socket
 import time
 
 import chess
@@ -8,6 +10,7 @@ import chess.engine
 
 import encoding
 import rescore_logic
+import profiling
 
 
 
@@ -35,7 +38,8 @@ async def main(args):
     encoding.write_payload(writer, [b'ready'])
     await writer.drain()
 
-    encoding.write_payload(writer, [str(args.chunk_size).encode()])
+    # Declare name and chunk_size for server
+    encoding.write_payload(writer, [str(f'{args.client_name} {str(args.chunk_size)}').encode()])
     await writer.drain()
 
     while True:
@@ -73,7 +77,7 @@ async def main(args):
                 scored_files.append(compressed_scored_game)
         time_elapsed = time.time() - start
 
-        print(f'finished scoring {len(scored_files)} files in {time_elapsed} seconds, {len(scored_files) / time_elapsed} files-per-second')
+        print(f'{os.getpid()} finished scoring {len(scored_files)} files in {time_elapsed} seconds, {len(scored_files) / time_elapsed} files-per-second')
         encoding.write_payload(writer, scored_files)
         await writer.drain()
 
@@ -130,6 +134,13 @@ if  __name__ == '__main__':
         type=bool,
         default=False,
         help='Just parrot back the data the server sends. Useful for testing the client, not actually scoring anything'
+    )
+    parser.add_argument(
+        '--client-name',
+        dest='client_name',
+        type=str,
+        default=f'{socket.gethostname()}',
+        help='string with which to identify your client to the server'
     )
     args = parser.parse_args()
     asyncio.run(main(args))

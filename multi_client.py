@@ -1,9 +1,10 @@
 import argparse
 import datetime
+import socket
 import subprocess
 import time
 
-def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, port, dry_run, backend):
+def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, port, dry_run, backend, client_name):
     subprocs = []
     for i in range(num_gpus):
         for _ in range(clients_per_gpu):
@@ -74,6 +75,19 @@ if __name__ == '__main__':
         default=False,
         help='Just parrot back the data the server sends. Useful for testing the client, not actually scoring anything'
     )
+    parser.add_argument(
+        '--client-name',
+        dest='client_name',
+        type=str,
+        help='string with which to identify your client to the server'
+    )
+    parser.add_argument(
+        '--client-name',
+        dest='client_name',
+        type=str,
+        default=f'{socket.gethostname()}',
+        help='string with which to identify your client to the server'
+    )
     args = parser.parse_args()
 
     output = subprocess.run(['nvidia-smi', '--list-gpus'], stdout=subprocess.PIPE)
@@ -89,4 +103,5 @@ if __name__ == '__main__':
         args.port,
         args.dry_run,
         args.backend,
+        args.client_name,
     )
