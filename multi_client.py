@@ -79,12 +79,6 @@ if __name__ == '__main__':
         '--client-name',
         dest='client_name',
         type=str,
-        help='string with which to identify your client to the server'
-    )
-    parser.add_argument(
-        '--client-name',
-        dest='client_name',
-        type=str,
         default=f'{socket.gethostname()}',
         help='string with which to identify your client to the server'
     )
