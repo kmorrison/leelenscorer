@@ -79,12 +79,18 @@ class ClientStats:
         for (timestamp, num_processed, time_taken) in self.processed_queue:
             if timestamp < cutoff_time:
                 break
-            num_processed_in_timeframe += num_processed
-            real_rate += (num_processed / time_taken)
+            if timestamp - datetime.timedelta(seconds=time_taken) < cutoff_time:
+                # Have to apply discounting because not all files processed by this client were processed in last_n_seconds, so calculate roughly how many were using *math*
+                seconds_in_stats_window = timestamp - cutoff_time
+                # What percentage of time_taken is in period we care about
+                overlap_ratio = seconds_in_stats_window.total_seconds() / time_taken
+                effective_num_processed = num_processed * overlap_ratio
+                num_processed_in_timeframe += effective_num_processed
+            else:
+                num_processed_in_timeframe += num_processed
         return dict(
             files_per_second=(num_processed_in_timeframe / last_n_seconds),
             total_files=self.total_processed,
-            real_rate=real_rate,
         )
 
 
@@ -137,7 +143,6 @@ class DirectoryQueue:
 
         while True:
             filenames = []
-            timestamp = datetime.datetime.now()
             start = time.time()
             for i, filepath in enumerate(self.scan_iter):
                 filenames.append(filepath)
@@ -176,7 +181,12 @@ class DirectoryQueue:
                     return
             # TODO: Do some sanity checking on these files to make sure they're roughly the right size.
 
-            self.track_stats(len(filenames), time.time() - start, timestamp, client_name)
+            self.track_stats(
+                num_processed=len(filenames),
+                time_taken=time.time() - start,
+                timestamp=datetime.datetime.now(),
+                client_name=client_name,
+            )
             self.total_processed += len(filenames)
             await write_files_to_disk(self.output_dir, self.input_dir, filenames, file_outputs)
 
