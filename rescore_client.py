@@ -27,8 +27,8 @@ async def main(args):
     if args.dry_run:
         engine = None
     else:
-        engine = chess.engine.SimpleEngine.popen_uci(command, timeout=20)
-        engine.configure(options)
+        _, engine = await chess.engine.popen_uci(command)
+        await engine.configure(options)
 
     reader, writer = await asyncio.open_connection(
         args.host,
@@ -64,13 +64,13 @@ async def main(args):
         start = time.time()
         for file in files_to_score:
             if args.dry_run:
-                compressed_unscored_game = rescore_logic.score_file(
+                compressed_unscored_game = await rescore_logic.score_file(
                     file,
                     None,
                 )
                 scored_files.append(compressed_unscored_game)
             else:
-                compressed_scored_game = rescore_logic.score_file(
+                compressed_scored_game = await rescore_logic.score_file(
                     file,
                     engine,
                 )
@@ -143,4 +143,5 @@ if  __name__ == '__main__':
         help='string with which to identify your client to the server'
     )
     args = parser.parse_args()
+    asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
     asyncio.run(main(args))
