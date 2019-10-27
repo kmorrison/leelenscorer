@@ -29,3 +29,7 @@ RUN pip3 install -r /root/leelenscorer/requirements.txt
 
 WORKDIR /root/binaries
 RUN wget --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=1sLFGu0pnw7PHrRmyGbIVFHIjbB4X-qNp' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=1sLFGu0pnw7PHrRmyGbIVFHIjbB4X-qNp" -O ls-n11-1.pb.gz && rm -rf /tmp/cookies.txt
+
+WORKDIR /root
+ADD onstart.sh /root
+RUN chmod 755 /root/onstart.sh
