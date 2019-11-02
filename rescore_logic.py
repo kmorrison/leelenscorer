@@ -36,9 +36,27 @@ def convert_planes(planes):
     retval = []
     for idx in range(0, len(planes), 8):
         pl = planes[idx:idx + 8]
-        a = np.fromstring(pl, dtype=np.uint8).reshape(8, 1)
+        a = np.fromstring(pl, dtype=np.uint8)
+        a = a.reshape(8, 1)
         retval.append(np.unpackbits(a, 1))
     return retval
+
+
+def make_bitboards(planes):
+    bitboards = {}
+    for piece_symbol, idx in zip(constants.PIECES, range(0, 8 * len(constants.PIECES), 8)):
+
+        current_bitmask = 0
+        pl = planes[idx:idx + 8]
+        for i, byte in enumerate(pl):
+            current_bitmask += constants.BIT_REVERSE[byte] << (i * 8)
+        board_attr = constants.SYMBOL_TO_BOARD_ATTR[piece_symbol.upper()]
+        bitboards.setdefault(
+            board_attr,
+            0,
+        )
+        bitboards[board_attr] += current_bitmask
+    return bitboards
 
 
 def new_board_from_planes(planes):
@@ -77,23 +95,36 @@ def set_castling(board, move_encoding):
     board.set_castling_fen(castling_fen)
 
 
+def board_equals_planes(board, piece_maps):
+    for piece_location, piece in board.piece_map().items():
+        planes_idx = constants.FAST_INDEX_PIECES[piece.symbol()]
+        row, col = divmod(piece_location, 8)
+        if not piece_maps[planes_idx][row][col]:
+            return False
+    return True
+    """
+    for attr, bitmask in bitboards.items():
+        if getattr(board, attr) != bitmask:
+            return False
+    return True
+    """
+
+
 def _infer_move_from_planes_and_current_board(planes, current_board):
-    new_board = new_board_from_planes(planes)
-    # Because `board` gets mirrored after move-push, it is always white to move. When the game is parsed from
-    # planes, white is always to move. Therefore to anticipate the next board, we must change who is to move
-    # on next board.
-    new_board = new_board.mirror()
-    new_board_piece_map = new_board.piece_map()
+    #bitboards = make_bitboards(planes)
+    # Only need the first 8 bits times 12 distinct pieces
+    piece_maps = convert_planes(planes[:len(constants.PIECES * 8)])
     for legal_move in current_board.legal_moves:
         current_board.push(legal_move)
-        if new_board_piece_map == current_board.piece_map():
+        temp_board = current_board.mirror()
+        if board_equals_planes(temp_board, piece_maps):
             move = legal_move.uci()
             current_board.pop()
             return move
         current_board.pop()
 
     else:
-        print(f"Couldn't infer next move from planes, board {current_board.fen()} planes {new_board.fen()}")
+        print(f"Couldn't infer next move from planes, board {current_board.fen()}")
         return None
 
 
