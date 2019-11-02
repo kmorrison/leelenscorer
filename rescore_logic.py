@@ -1,6 +1,5 @@
 import struct
 import gzip
-import itertools
 from collections import namedtuple
 
 import chess
@@ -32,24 +31,21 @@ V4Encoding = namedtuple(
 )
 
 
-def convert_planes(planes):
-    retval = []
-    for idx in range(0, len(planes), 8):
-        pl = planes[idx:idx + 8]
-        a = np.fromstring(pl, dtype=np.uint8)
-        a = a.reshape(8, 1)
-        retval.append(np.unpackbits(a, 1))
-    return retval
-
-
 def make_bitboards(planes):
-    bitboards = {}
+    bitboards = dict(
+        white=0,
+        black=0,
+    )
     for piece_symbol, idx in zip(constants.PIECES, range(0, 8 * len(constants.PIECES), 8)):
-
         current_bitmask = 0
         pl = planes[idx:idx + 8]
         for i, byte in enumerate(pl):
-            current_bitmask += constants.BIT_REVERSE[byte] << (i * 8)
+            new_mask = constants.BIT_REVERSE[byte] << (i * 8)
+            current_bitmask += new_mask
+            if piece_symbol.isupper():
+                bitboards['white'] += new_mask
+            else:
+                bitboards['black'] += new_mask
         board_attr = constants.SYMBOL_TO_BOARD_ATTR[piece_symbol.upper()]
         bitboards.setdefault(
             board_attr,
@@ -57,17 +53,6 @@ def make_bitboards(planes):
         )
         bitboards[board_attr] += current_bitmask
     return bitboards
-
-
-def new_board_from_planes(planes):
-    new_board = chess.Board.empty()
-    piece_maps = convert_planes(planes)[:len(constants.PIECES)]
-
-    for i, piece in enumerate(constants.PIECES):
-        for (j, k) in itertools.product(range(8), range(8)):
-            if piece_maps[i][k][j]:
-                new_board.set_piece_at(chess.square(j, k), chess.Piece.from_symbol(piece))
-    return new_board
 
 
 def parse_game(data):
@@ -81,43 +66,20 @@ def read_chunks(data, length):
         yield data[i:i + length]
 
 
-def set_castling(board, move_encoding):
-    castle = []
-    if move_encoding.us_oo:
-        castle.append('K')
-    if move_encoding.us_ooo:
-        castle.append('Q')
-    if move_encoding.them_oo:
-        castle.append('k')
-    if move_encoding.them_ooo:
-        castle.append('q')
-    castling_fen = "".join(castle)
-    board.set_castling_fen(castling_fen)
-
-
-def board_equals_planes(board, piece_maps):
-    for piece_location, piece in board.piece_map().items():
-        planes_idx = constants.FAST_INDEX_PIECES[piece.symbol()]
-        row, col = divmod(piece_location, 8)
-        if not piece_maps[planes_idx][row][col]:
+def board_equals_planes(board, bitboards):
+    for attr in constants.BOARD_ATTRS:
+        if getattr(board, attr) != bitboards[attr]:
             return False
-    return True
-    """
-    for attr, bitmask in bitboards.items():
-        if getattr(board, attr) != bitmask:
-            return False
-    return True
-    """
+    return bitboards['white'] == board.occupied_co[chess.WHITE] and bitboards['black'] == board.occupied_co[chess.BLACK]
 
 
 def _infer_move_from_planes_and_current_board(planes, current_board):
-    #bitboards = make_bitboards(planes)
+    bitboards = make_bitboards(planes)
     # Only need the first 8 bits times 12 distinct pieces
-    piece_maps = convert_planes(planes[:len(constants.PIECES * 8)])
     for legal_move in current_board.legal_moves:
         current_board.push(legal_move)
         temp_board = current_board.mirror()
-        if board_equals_planes(temp_board, piece_maps):
+        if board_equals_planes(temp_board, bitboards):
             move = legal_move.uci()
             current_board.pop()
             return move

@@ -17,8 +17,8 @@ RUN cp /root/lc0/build/release/lc0 /root/binaries
 WORKDIR /root
 RUN wget https://stockfishchess.org/files/stockfish-10-linux.zip
 RUN unzip stockfish-10-linux.zip
-RUN chmod 755 /root/stockfish-10-linux/Linux/stockfish_10_x64_bmi2
-RUN cp /root/stockfish-10-linux/Linux/stockfish_10_x64_bmi2 /root/binaries
+RUN chmod 755 /root/stockfish-10-linux/Linux/stockfish_10_x64_modern
+RUN cp /root/stockfish-10-linux/Linux/stockfish_10_x64_modern /root/binaries
 
 RUN echo "setw -g mode-keys vi" > /root/.tmux.conf
 RUN apt-get install -y python3.7-dev vim
@@ -29,7 +29,3 @@ RUN pip3 install -r /root/leelenscorer/requirements.txt
 
 WORKDIR /root/binaries
 RUN wget --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=1sLFGu0pnw7PHrRmyGbIVFHIjbB4X-qNp' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=1sLFGu0pnw7PHrRmyGbIVFHIjbB4X-qNp" -O ls-n11-1.pb.gz && rm -rf /tmp/cookies.txt
-
-WORKDIR /root
-ADD onstart.sh /root
-RUN chmod 755 /root/onstart.sh
