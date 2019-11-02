@@ -40,9 +40,9 @@ def make_bitboards(planes):
         current_bitmask = 0
         pl = planes[idx:idx + 8]
         for i, byte in enumerate(pl):
-            new_mask = constants.BIT_REVERSE[byte] << (i * 8)
+            new_mask = constants.BIT_REVERSE[byte] << ((8 - i - 1) * 8)
             current_bitmask += new_mask
-            if piece_symbol.isupper():
+            if not piece_symbol.isupper():
                 bitboards['white'] += new_mask
             else:
                 bitboards['black'] += new_mask
@@ -78,8 +78,7 @@ def _infer_move_from_planes_and_current_board(planes, current_board):
     # Only need the first 8 bits times 12 distinct pieces
     for legal_move in current_board.legal_moves:
         current_board.push(legal_move)
-        temp_board = current_board.mirror()
-        if board_equals_planes(temp_board, bitboards):
+        if board_equals_planes(current_board, bitboards):
             move = legal_move.uci()
             current_board.pop()
             return move
