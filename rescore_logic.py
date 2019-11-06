@@ -89,10 +89,10 @@ def _infer_move_from_planes_and_current_board(planes, current_board):
         return None
 
 
-async def score_move(engine, board, move_encoding):
+async def score_move(engine, board, move_encoding, num_nodes=1):
     if engine is None:
         return struct.pack(constants.V4_STRUCT_STRING, *move_encoding)
-    info = await engine.analyse(board, chess.engine.Limit(nodes=1))
+    info = await engine.analyse(board, chess.engine.Limit(nodes=num_nodes))
     q = info["score"].relative.score(mate_score=100) / 10000
 
     return struct.pack(
@@ -127,14 +127,14 @@ def _is_single_probability_encoding(probs):
     return bool(num_nan - num_nonzero == 1)
 
 
-async def score_file(data, engine):
+async def score_file(data, engine, num_nodes=1):
     decompressed_data = gzip.decompress(data)
     board = chess.Board()
     rescored_game = struct.pack("")
     for current_encoding, next_encoding in pairwise(parse_game(decompressed_data)):
         if len(board.piece_map()) == 5:
             break
-        rescored_game += await score_move(engine, board, current_encoding)
+        rescored_game += await score_move(engine, board, current_encoding, num_nodes)
 
         # Find next move that was played in game
         probs = np.frombuffer(current_encoding.probs, dtype=np.float32)

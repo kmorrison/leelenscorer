@@ -75,7 +75,6 @@ class ClientStats:
         cutoff_time = now - datetime.timedelta(seconds=last_n_seconds)
 
         num_processed_in_timeframe = 0
-        real_rate = 0
         for (timestamp, num_processed, time_taken) in self.processed_queue:
             if timestamp < cutoff_time:
                 break

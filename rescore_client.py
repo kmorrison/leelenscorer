@@ -23,6 +23,8 @@ async def main(args):
         "Backend": args.backend,
         "BackendOptions": f'gpu={args.gpu_id}',
     }
+    if args.num_nodes > 1:
+        options['MultiPV'] = args.num_nodes
     command = args.path_to_rescore_engine_binary
     if args.dry_run:
         engine = None
@@ -141,6 +143,13 @@ if  __name__ == '__main__':
         type=str,
         default=f'{socket.gethostname()}',
         help='string with which to identify your client to the server'
+    )
+    parser.add_argument(
+        '--num-nodes',
+        dest='num_nodes',
+        type=int,
+        default=1,
+        help='number of game nodes to evaluate per move'
     )
     args = parser.parse_args()
     asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
