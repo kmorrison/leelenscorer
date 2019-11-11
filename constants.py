@@ -1,5 +1,7 @@
 import struct
 
+import chess
+
 VERSION3 = struct.pack('i', 3)
 VERSION4 = struct.pack('i', 4)
 V3_BYTES = 8276
@@ -1904,3 +1906,5 @@ MOVES = [
     "h7h8r",
     "h7h8b"
 ]
+
+MOVES_LOOKUP = dict((move, i) for (i, move) in enumerate(MOVES))

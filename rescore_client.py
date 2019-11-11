@@ -23,8 +23,6 @@ async def main(args):
         "Backend": args.backend,
         "BackendOptions": f'gpu={args.gpu_id}',
     }
-    if args.num_nodes > 1:
-        options['MultiPV'] = args.num_nodes
     command = args.path_to_rescore_engine_binary
     if args.dry_run:
         engine = None
@@ -75,6 +73,7 @@ async def main(args):
                 compressed_scored_game = await rescore_logic.score_file(
                     file,
                     engine,
+                    args.num_nodes,
                 )
                 scored_files.append(compressed_scored_game)
         time_elapsed = time.time() - start
@@ -86,7 +85,7 @@ async def main(args):
     writer.close()
     await writer.wait_closed()
     try:
-        engine.quit()
+        await engine.quit()
     except AttributeError:
         assert args.dry_run
     finally:

@@ -1,5 +1,6 @@
-import struct
+import math
 import gzip
+import struct
 from collections import namedtuple
 
 import chess
@@ -89,16 +90,47 @@ def _infer_move_from_planes_and_current_board(planes, current_board):
         return None
 
 
-async def score_move(engine, board, move_encoding, num_nodes=1):
+async def score_move(engine, board, move_encoding, probs, num_nodes, next_move_in_game):
     if engine is None:
         return struct.pack(constants.V4_STRUCT_STRING, *move_encoding)
-    info = await engine.analyse(board, chess.engine.Limit(nodes=num_nodes))
-    q = info["score"].relative.score(mate_score=100) / 10000
+    boosting_nodes = math.ceil((num_nodes / 0.7) - num_nodes)
+    engine_kwargs = {}
+    if num_nodes > 1:
+        engine_kwargs['multipv'] = num_nodes
+    infos = await engine.analyse(
+        board,
+        chess.engine.Limit(nodes=num_nodes),
+        multipv=math.ceil(num_nodes / 2),
+    )
+    q = None
+    total_visited_nodes = 0
+    move_nodes = {}
+    for i, info in enumerate(infos):
+        if i == 0:
+            q = info["score"].relative.score(mate_score=100) / 10000
+        pythonchess_move = info['pv'][0]
+        move = unclean_uci_move_to_lc0(pythonchess_move.uci(), board)
+        node_count = info['nodes']
+
+        total_visited_nodes += node_count
+        move_nodes[move] = node_count
+
+        if pythonchess_move == next_move_in_game:
+            move_nodes[move] += boosting_nodes
+            total_visited_nodes += boosting_nodes
+
+    if total_visited_nodes == 0:
+        raise Exception("somehow no moves visited in position, crashing")
+
+    # create writeable probability array
+    probs = np.array(probs)
+    for move, node_count in move_nodes.items():
+        probs[constants.MOVES_LOOKUP[move]] = node_count / total_visited_nodes
 
     return struct.pack(
         constants.V4_STRUCT_STRING,
         move_encoding.version,
-        move_encoding.probs,
+        probs.tobytes(),
         move_encoding.planes,
         move_encoding.us_ooo,
         move_encoding.us_oo,
@@ -110,7 +142,7 @@ async def score_move(engine, board, move_encoding, num_nodes=1):
         move_encoding.winner,
         q,
         q,
-        move_encoding.root_d,
+        constants.MOVES_LOOKUP[unclean_uci_move_to_lc0(next_move_in_game.uci(), board)],
         move_encoding.best_d,
     )
 
@@ -122,9 +154,31 @@ def _is_single_probability_encoding(probs):
     np.count_nonzero(probs), but np.nan is truthy in python and counts as nonzero, so we need to subtract the number
     of nans present.
     """
-    num_nan = np.count_nonzero(~np.isnan(probs))
+    num_nan = np.count_nonzero(np.isnan(probs))
     num_nonzero = np.count_nonzero(probs)
-    return bool(num_nan - num_nonzero == 1)
+    return bool(num_nonzero - num_nan == 1)
+
+
+def clean_lc0_to_uci_move(move, board):
+    # Clean move to fit python-chess data expectations
+    if move[1] == "7" and move[3] == "8" and board.piece_type_at(
+            chess.SQUARE_NAMES.index(move[0:2])) == chess.PAWN and len(move) == 4:
+        return move + 'n'
+    if move == "e1h1" and board.piece_type_at(chess.E1) == chess.KING:
+        return "e1g1"
+    if move == "e1a1" and board.piece_type_at(chess.E1) == chess.KING:
+        return "e1c1"
+    return move
+
+
+def unclean_uci_move_to_lc0(move, board):
+    if len(move) == 5 and move.endswith('n'):
+        return move[:4]
+    if move == "e1g1" and board.piece_type_at(chess.E1) == chess.KING:
+        return "e1h1"
+    if move == "e1c1" and board.piece_type_at(chess.E1) == chess.KING:
+        return "e1a1"
+    return move
 
 
 async def score_file(data, engine, num_nodes=1):
@@ -134,31 +188,39 @@ async def score_file(data, engine, num_nodes=1):
     for current_encoding, next_encoding in pairwise(parse_game(decompressed_data)):
         if len(board.piece_map()) == 5:
             break
-        rescored_game += await score_move(engine, board, current_encoding, num_nodes)
+        probs = np.frombuffer(current_encoding.probs, dtype=np.float32)
 
         # Find next move that was played in game
-        probs = np.frombuffer(current_encoding.probs, dtype=np.float32)
         if _is_single_probability_encoding(probs):
             move = constants.MOVES[np.nanargmax(probs)]
         else:
             move = _infer_move_from_planes_and_current_board(next_encoding.planes, board)
             assert move is not None, "Couldn't infer move, failing"
 
-        # Clean move to fit python-chess data expectations
-        if move[1] == "7" and move[3] == "8" and board.piece_type_at(
-                chess.SQUARE_NAMES.index(move[0:2])) == chess.PAWN and len(move) == 4:
-            move += "n"
-        if move is "e1h1" and board.piece_type_at(chess.E1) == chess.KING:
-            move = "e1g1"
-        if move is "e1a1" and board.piece_type_at(chess.E1) == chess.KING:
-            move = "e1c1"
+        move = clean_lc0_to_uci_move(move, board)
         m = chess.Move.from_uci(move)
+
+        rescored_game += await score_move(
+            engine,
+            board,
+            current_encoding,
+            probs,
+            num_nodes,
+            m,
+        )
 
         board.push(m)
         board = board.mirror()
 
     # This is a super ugly hack to solve the off-by-one problem iterating through pairwise gives me, just to get this thing working.
     if rescored_game and len(board.piece_map()) > 5:
-        rescored_game += await score_move(engine, board, next_encoding)
+        rescored_game += await score_move(
+            engine,
+            board,
+            next_encoding,
+            np.frombuffer(next_encoding.probs, dtype=np.float32),
+            num_nodes,
+            m,
+        )
 
     return gzip.compress(rescored_game)
