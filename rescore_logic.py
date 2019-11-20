@@ -208,8 +208,12 @@ async def score_file(data, engine, num_nodes=1):
         if _is_single_probability_encoding(probs):
             move = constants.MOVES[np.nanargmax(probs)]
         else:
+            # For now, return immediately if there is a policy already, indicating we've already scored this game
+            return gzip.compress(decompressed_data)
+            """
             move = _infer_move_from_planes_and_current_board(next_encoding.planes, board)
             assert move is not None, "Couldn't infer move, failing"
+            """
 
         move = clean_lc0_to_uci_move(move, board)
         m = chess.Move.from_uci(move)
