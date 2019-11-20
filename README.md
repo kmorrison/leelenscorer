@@ -13,6 +13,22 @@ Then, install `requirements.txt` globally or in a virtualenv using `pip install 
 ### Client
 
 If you're pro python, just set up a virtualenv and pip install the requirements in there. Client uses asyncio features that are new as of `python3.7`, so `python3.7` is a requirement
+```
+git clone git@github.com:kmorrison/leelenscorer.git
+cd leelenscorer/
+pip install -r requirements.txt
+python3 multi_client.py \
+  --clients-per-gpu=3 \
+  --engine-path=<path to lc0> \
+  --weights-path=<path to LS 11.1 network> \
+  --host=173.67.18.127 \
+  --port=8889 \
+  --backend=cudnn-fp16 \
+  --num-nodes=128 \
+  --minibatchsize=16 \
+  --client-name=RAFmb16N128 \
+  --chunk-size=5
+```
 
 If you like docker instead, the client code should be all ready to go in the `kmorrison64/leelenscorer` dockerhub repo. If you're using vast.ai, just switch the container to the latest version at that repo and you're half-way there.
 
