@@ -18,7 +18,7 @@ async def main(args):
     options = {
         "WeightsFile": args.path_to_weights,
         "Threads": 1,
-        "MinibatchSize": 1,
+        "MinibatchSize": args.minibatchsize,
         "ScoreType": "Q",
         "Backend": args.backend,
         "BackendOptions": f'gpu={args.gpu_id}',
@@ -33,6 +33,7 @@ async def main(args):
     reader, writer = await asyncio.open_connection(
         args.host,
         args.port,
+        limit=128000,
     )
 
     encoding.write_payload(writer, [b'ready'])
@@ -149,6 +150,13 @@ if  __name__ == '__main__':
         type=int,
         default=1,
         help='number of game nodes to evaluate per move'
+    )
+    parser.add_argument(
+        '--minibatchsize',
+        dest='minibatchsize',
+        type=int,
+        default=1,
+        help='minibatch arg to engine'
     )
     args = parser.parse_args()
     asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())

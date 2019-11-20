@@ -90,18 +90,8 @@ def _infer_move_from_planes_and_current_board(planes, current_board):
         return None
 
 
-async def score_move(engine, board, move_encoding, probs, num_nodes, next_move_in_game):
-    if engine is None:
-        return struct.pack(constants.V4_STRUCT_STRING, *move_encoding)
+def q_and_probs_from_engine_score(infos, probs, num_nodes, board, next_move_in_game):
     boosting_nodes = math.ceil((num_nodes / 0.7) - num_nodes)
-    engine_kwargs = {}
-    if num_nodes > 1:
-        engine_kwargs['multipv'] = num_nodes
-    infos = await engine.analyse(
-        board,
-        chess.engine.Limit(nodes=num_nodes),
-        multipv=math.ceil(num_nodes / 2),
-    )
     q = None
     total_visited_nodes = 0
     move_nodes = {}
@@ -126,6 +116,30 @@ async def score_move(engine, board, move_encoding, probs, num_nodes, next_move_i
     probs = np.array(probs)
     for move, node_count in move_nodes.items():
         probs[constants.MOVES_LOOKUP[move]] = node_count / total_visited_nodes
+    return q, probs
+
+
+async def score_move(engine, board, move_encoding, probs, num_nodes, next_move_in_game):
+    if engine is None:
+        return struct.pack(constants.V4_STRUCT_STRING, *move_encoding)
+
+    engine_kwargs = {}
+    if num_nodes > 1:
+        engine_kwargs['multipv'] = num_nodes
+
+    infos = await engine.analyse(
+        board,
+        chess.engine.Limit(nodes=num_nodes),
+        multipv=math.ceil(num_nodes / 2),
+    )
+
+    q, probs = q_and_probs_from_engine_score(
+        infos,
+        probs,
+        num_nodes,
+        board,
+        next_move_in_game,
+    )
 
     return struct.pack(
         constants.V4_STRUCT_STRING,

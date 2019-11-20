@@ -4,7 +4,7 @@ import socket
 import subprocess
 import time
 
-def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, port, dry_run, backend, client_name, num_nodes):
+def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, port, dry_run, backend, client_name, num_nodes, minibatchsize):
     subprocs = []
     for i in range(num_gpus):
         for _ in range(clients_per_gpu):
@@ -19,7 +19,8 @@ def spawn_clients(num_gpus, clients_per_gpu, chunk_size, engine, weights, host, 
                 f'--port={port}',
                 f'--backend={backend}',
                 f'--client-name={client_name}',
-                f'--num-nodes={num_nodes}'
+                f'--num-nodes={num_nodes}',
+                f'--minibatchsize={minibatchsize}',
             ]
             if dry_run:
                 process_command.append(f'--dry-run=True')
@@ -91,6 +92,13 @@ if __name__ == '__main__':
         default=1,
         help='number of game nodes to evaluate per move'
     )
+    parser.add_argument(
+        '--minibatchsize',
+        dest='minibatchsize',
+        type=int,
+        default=1,
+        help='minibatch arg to engine'
+    )
     args = parser.parse_args()
 
     output = subprocess.run(['nvidia-smi', '--list-gpus'], stdout=subprocess.PIPE)
@@ -108,4 +116,5 @@ if __name__ == '__main__':
         args.backend,
         args.client_name,
         args.num_nodes,
+        args.minibatchsize,
     )
