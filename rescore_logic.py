@@ -229,6 +229,7 @@ async def score_file(data, engine, num_nodes=1):
 
         board.push(m)
         board = board.mirror()
+        board.halfmove_clock = current_encoding.rule50_count
 
     # This is a super ugly hack to solve the off-by-one problem iterating through pairwise gives me, just to get this thing working.
     if rescored_game and len(board.piece_map()) > 5:
