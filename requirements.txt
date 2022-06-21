@@ -5,7 +5,7 @@ httpcore==0.3.0
 httptools==0.0.13
 idna==2.8
 np==1.0.2
-numpy==1.17.3
+numpy==1.22.0
 python-chess==0.28.3
 requests==2.22.0
 requests-async==0.5.0
